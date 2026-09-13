@@ -1,0 +1,16 @@
+[Unit]
+Description=Locate the shared APFS SEP xART gigalocker
+DefaultDependencies=no
+Wants=systemd-udev-settle.service
+After=systemd-udev-settle.service
+Before=local-fs-pre.target aurora-sep.service
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecCondition=/bin/sh -c 'modinfo apple_sep >/dev/null 2>&1'
+ExecStart=/usr/local/sbin/aurora-sep-xart-map
+
+[Install]
+WantedBy=sysinit.target

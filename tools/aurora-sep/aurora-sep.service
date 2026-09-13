@@ -1,0 +1,14 @@
+[Unit]
+Description=Aurora SEP services
+After=local-fs.target aurora-sep-xart-map.service
+Requires=aurora-sep-xart-map.service
+RequiresMountsFor=/var/lib
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecCondition=/bin/sh -c 'modinfo apple_sep >/dev/null 2>&1'
+ExecStart=/usr/local/sbin/aurora-sep-load
+
+[Install]
+WantedBy=multi-user.target

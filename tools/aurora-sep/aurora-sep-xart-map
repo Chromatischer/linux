@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+name=sep-xart-gigalocker
+source=/dev/disk/by-partlabel/iBootSystemContainer
+expected_type=69646961-6700-11aa-aa11-00306543ecac
+expected_sectors=12288
+expected_bytes=6291456
+
+table_file=$(mktemp /run/aurora-sep-xart-table.XXXXXX)
+normal_file=$(mktemp /run/aurora-sep-xart-normal.XXXXXX)
+current_file=$(mktemp /run/aurora-sep-xart-current.XXXXXX)
+created=0
+
+cleanup() {
+	if [ "$created" = 1 ]; then
+		dmsetup remove "$name" >/dev/null 2>&1 || true
+	fi
+	rm -f -- "$table_file" "$normal_file" "$current_file"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+[ -b "$source" ] || {
+	echo "aurora-sep-xart: iBootSystemContainer is not a block device" >&2
+	exit 1
+}
+resolved=$(readlink -f "$source")
+[ -b "$resolved" ] || {
+	echo "aurora-sep-xart: partition symlink is invalid" >&2
+	exit 1
+}
+[ "$(lsblk -dnro PARTTYPE "$resolved" | tr A-F a-f)" = "$expected_type" ] || {
+	echo "aurora-sep-xart: iBootSystemContainer has the wrong GPT type" >&2
+	exit 1
+}
+if findmnt -rn -S "$resolved" >/dev/null; then
+	echo "aurora-sep-xart: refusing to alias a mounted APFS partition" >&2
+	exit 1
+fi
+
+/usr/local/libexec/apfuse xart-map "$source" >"$table_file"
+awk -v source="$source" -v sectors="$expected_sectors" '
+	BEGIN { next_start = 0; total = 0 }
+	NF != 5 || $1 != next_start || $2 <= 0 || $3 != "linear" ||
+		$4 != source || $5 < 0 { exit 1 }
+	{ next_start += $2; total += $2 }
+	END { if (NR == 0 || total != sectors) exit 1 }
+' "$table_file" || {
+	echo "aurora-sep-xart: invalid APFS extent map" >&2
+	exit 1
+}
+
+major_minor=$(lsblk -dnro MAJ:MIN "$resolved")
+[ -n "$major_minor" ] || exit 1
+awk -v device="$major_minor" '{$4 = device; print}' "$table_file" >"$normal_file"
+
+if dmsetup info "$name" >/dev/null 2>&1; then
+	dmsetup table "$name" | awk '{$1 = $1; print}' >"$current_file"
+	cmp -s "$normal_file" "$current_file" || {
+		echo "aurora-sep-xart: incompatible mapping already exists" >&2
+		exit 1
+	}
+	if [ "$(blockdev --getro "/dev/mapper/$name")" = 1 ]; then
+		dmsetup remove "$name"
+		dmsetup create "$name" <"$table_file"
+		created=1
+	fi
+else
+	dmsetup create "$name" <"$table_file"
+	created=1
+fi
+
+mapper=/dev/mapper/$name
+[ -b "$mapper" ] || exit 1
+[ "$(blockdev --getro "$mapper")" = 0 ] || exit 1
+[ "$(blockdev --getsize64 "$mapper")" = "$expected_bytes" ] || exit 1
+
+created=0
+echo "aurora-sep-xart: installed validated APFS extent map"
