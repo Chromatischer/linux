@@ -936,7 +936,15 @@ void DCP_FW_NAME(iomfb_poweroff)(struct apple_dcp *dcp)
 	swap_id = cookie->swap_id;
 	kref_put(&cookie->refcount, release_swap_cookie);
 	if (ret <= 0) {
-		dcp->crashed = true;
+		/*
+		 * An unplugged display leaves this swap unacknowledged.  That
+		 * is not a crash, and ->crashed rejects every later commit on
+		 * this CRTC until reboot.  Return rather than continuing the
+		 * teardown: that path fails the dptx HPD deassert and the
+		 * display never comes back.
+		 */
+		dev_warn(dcp->dev,
+			 "poweroff: clear swap did not complete in 50 ms\n");
 		return;
 	}
 
