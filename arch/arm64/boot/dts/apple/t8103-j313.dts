@@ -20,6 +20,8 @@
 
 	aliases {
 		sep = &sep;
+		/* m1n1 prepares SIO firmware for external display audio. */
+		sio = &sio;
 	};
 
 	led-controller {
